@@ -56,6 +56,13 @@ Normal scan, printing a concise Nmap-style summary to the terminal:
 reconmap scan example.com
 ```
 
+The terminal report includes DNS totals plus per-host asset, HTTP service, and TLS certificate tables. Each table shows up to 20 rows by default:
+
+```bash
+reconmap scan example.com --max-rows 50
+reconmap scan example.com --max-rows 0  # show all rows
+```
+
 Print live progress followed by the concise summary:
 
 ```bash

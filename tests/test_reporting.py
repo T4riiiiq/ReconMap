@@ -26,7 +26,13 @@ class ReportingTests(unittest.TestCase):
             self.assertEqual({path.name for path in Path(directory).iterdir()}, expected)
             summary = json.loads((Path(directory) / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["asset_count"], 1)
-            self.assertIn("Informational mapping only", (Path(directory) / "report.md").read_text(encoding="utf-8"))
+            report = (Path(directory) / "report.md").read_text(encoding="utf-8")
+            self.assertIn("Informational mapping only", report)
+            self.assertIn("## DNS Summary", report)
+            self.assertIn("## Discovered Assets", report)
+            self.assertIn("## HTTP Services", report)
+            self.assertIn("## TLS Certificates", report)
+            self.assertIn("## Security Header Overview", report)
 
     def test_empty_domainkey_query_is_not_a_dkim_hint(self):
         from reconmap.dnsmap import email_security_hints

@@ -2,11 +2,22 @@ from __future__ import annotations
 
 import csv
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 from reconmap.dnsmap import email_security_hints, resolved_ips
 from reconmap.httpmap import SECURITY_HEADERS
+
+
+@dataclass
+class ScanResult:
+    summary: dict[str, Any]
+    hosts: list[str]
+    dns_rows: list[dict[str, Any]]
+    http_rows: list[dict[str, Any]]
+    tls_rows: list[dict[str, Any]]
+    sources: dict[str, str]
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]], fields: list[str]) -> None:
@@ -49,55 +60,91 @@ def build_summary(
     }
 
 
-def render_report(
-    summary: dict[str, Any],
-    hosts: list[str],
-    http_rows: list[dict[str, Any]],
-    tls_rows: list[dict[str, Any]],
-) -> str:
-    missing_lines = "\n".join(
-        f"- `{name}` missing from {count} responding service(s)"
+def _missing_headers(row: dict[str, Any]) -> str:
+    labels = {
+        "hsts": "HSTS",
+        "csp": "CSP",
+        "x_frame_options": "XFO",
+        "x_content_type_options": "XCTO",
+        "referrer_policy": "Referrer-Policy",
+    }
+    return ",".join(label for key, label in labels.items() if not row[key]) or "none"
+
+
+def _issuer_name(value: str) -> str:
+    for part in value.split(","):
+        key, _, name = part.strip().partition("=")
+        if key.lower() in {"commonname", "organizationname"} and name:
+            return name
+    return value or "not disclosed"
+
+
+def _markdown_table(headers: list[str], rows: list[list[Any]]) -> str:
+    if not rows:
+        return "_None observed._"
+    clean = lambda value: str(value).replace("|", r"\|").replace("\n", " ")
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    lines.extend("| " + " | ".join(clean(value) for value in row) + " |" for row in rows)
+    return "\n".join(lines)
+
+
+def render_report(result: ScanResult) -> str:
+    summary = result.summary
+    hints = summary["email_security_hints"]
+    asset_rows = [
+        [host, ", ".join(resolved_ips(result.dns_rows, host)) or "-", result.sources.get(host, "known")]
+        for host in result.hosts
+    ]
+    http_rows = [
+        [row["url"], row["status"], row["title"] or "-", row["server"] or "-", _missing_headers(row)]
+        for row in result.http_rows
+    ]
+    tls_rows = [
+        [
+            row["host"],
+            _issuer_name(str(row["issuer"])),
+            str(row["expiry_date"])[:10],
+            row["days_until_expiry"],
+            len([san for san in str(row["sans"]).split("; ") if san]),
+        ]
+        for row in result.tls_rows
+    ]
+    header_rows = [
+        [name, count]
         for name, count in summary["missing_security_headers"].items()
-    )
-    service_lines = "\n".join(
-        f"- `{row['url']}`: HTTP {row['status']}, title `{row['title'] or 'n/a'}`, server `{row['server'] or 'not disclosed'}`"
-        for row in http_rows
-    ) or "- No responding HTTP/S services observed."
-    tls_lines = "\n".join(
-        f"- `{row['host']}`: expires {row['expiry_date']} ({row['days_until_expiry']} days)"
-        for row in tls_rows
-    ) or "- No validated TLS certificates observed."
-    notes = "\n".join(f"- {note}" for note in summary["investigation_notes"]) or "- None."
-    assets = "\n".join(f"- `{host}`" for host in hosts)
+    ]
     return f"""# ReconMap Report: {summary['root_domain']}
 
-## Executive Summary
+## DNS Summary
 
-ReconMap identified **{summary['asset_count']}** in-scope public asset(s), **{summary['http_service_count']}** responding HTTP/S service(s), and **{summary['tls_certificate_count']}** validated TLS certificate(s).
+- Resolved IPs: **{len(summary['resolved_ips'])}**
+- Nameservers: **{summary['nameserver_count']}**
+- MX records: **{summary['mx_record_count']}**
+- SPF: **{'present' if hints['spf'] else 'not observed'}**
+- DMARC: **{'present' if hints['dmarc'] else 'not observed'}**
 
 ## Discovered Assets
 
-{assets}
+{_markdown_table(["Host", "IPs", "Source"], asset_rows)}
 
-## Exposed HTTP Services
+## HTTP Services
 
-{service_lines}
+{_markdown_table(["URL", "Status", "Title", "Server", "Missing Headers"], http_rows)}
 
-## Missing Security Headers Summary
+## TLS Certificates
 
-{missing_lines}
+{_markdown_table(["Host", "Issuer", "Expires", "Days Left", "SAN Count"], tls_rows)}
 
-## TLS Expiry Notes
+## Security Header Overview
 
-{tls_lines}
+{_markdown_table(["Header", "Missing From Services"], header_rows)}
 
-## Investigation Notes
+## Informational Disclaimer
 
-{notes}
-
-## Disclaimer
-
-**Informational mapping only, not vulnerability validation.** ReconMap performs passive and lightweight active checks. It does not exploit vulnerabilities, brute force names or credentials, scan directories, or perform destructive actions.
+**Informational mapping only, not vulnerability validation.** ReconMap performs passive and lightweight active checks. It does not exploit vulnerabilities, brute force names or credentials, scan directories, test passwords, or perform destructive actions.
 """
 
 
@@ -111,6 +158,7 @@ def write_outputs(
     notes: list[str],
     summary: dict[str, Any] | None = None,
     progress: Callable[..., None] | None = None,
+    sources: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -139,20 +187,70 @@ def write_outputs(
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     if progress:
         progress(f"Wrote {output / 'summary.json'}", success=True)
-    (output / "report.md").write_text(render_report(summary, hosts, http_rows, tls_rows), encoding="utf-8")
+    result = ScanResult(summary, hosts, dns_rows, http_rows, tls_rows, sources or {})
+    (output / "report.md").write_text(render_report(result), encoding="utf-8")
     if progress:
         progress(f"Wrote {output / 'report.md'}", success=True)
     return summary
 
 
-def render_console_summary(summary: dict[str, Any], output_dir: str | Path | None = None) -> str:
+def _terminal_table(headers: list[str], rows: list[list[Any]], max_rows: int) -> str:
+    displayed = rows if max_rows == 0 else rows[:max_rows]
+    if not displayed:
+        return "(none observed)"
+    widths = [
+        min(max(len(str(header)), *(len(str(row[index])) for row in displayed)), limit)
+        for index, (header, limit) in enumerate(zip(headers, [32, 42, 24, 22, 42]))
+    ]
+
+    def line(row: list[Any]) -> str:
+        cells = []
+        for value, width in zip(row, widths):
+            text = str(value)
+            if len(text) > width:
+                text = text[: max(1, width - 3)] + "..."
+            cells.append(text.ljust(width))
+        return "  ".join(cells).rstrip()
+
+    output = [line(headers), line(["-" * width for width in widths])]
+    output.extend(line(row) for row in displayed)
+    omitted = len(rows) - len(displayed)
+    if omitted:
+        output.append(f"... {omitted} more rows omitted. Use --max-rows 0 to show all.")
+    return "\n".join(output)
+
+
+def render_console_summary(
+    result: ScanResult | dict[str, Any],
+    output_dir: str | Path | None = None,
+    max_rows: int = 20,
+) -> str:
+    if isinstance(result, dict):
+        result = ScanResult(result, [], [], [], [], {})
+    summary = result.summary
     hints = summary["email_security_hints"]
-    missing = summary["missing_security_headers"]
-    expiry = summary["earliest_tls_expiry"][:10] if summary["earliest_tls_expiry"] else "none observed"
     title = summary["root_domain"] or "provided hosts"
+    asset_rows = [
+        [host, ", ".join(resolved_ips(result.dns_rows, host)) or "-", result.sources.get(host, "known")]
+        for host in result.hosts
+    ]
+    http_rows = [
+        [row["url"], row["status"], row["title"] or "-", row["server"] or "-", _missing_headers(row)]
+        for row in result.http_rows
+    ]
+    tls_rows = [
+        [
+            row["host"],
+            _issuer_name(str(row["issuer"])),
+            str(row["expiry_date"])[:10],
+            row["days_until_expiry"],
+            len([san for san in str(row["sans"]).split("; ") if san]),
+        ]
+        for row in result.tls_rows
+    ]
     text = f"""ReconMap scan report for {title}
 
-DNS
+DNS Summary
 
 * Resolved IPs: {len(summary['resolved_ips'])}
 * Nameservers: {summary['nameserver_count']}
@@ -160,17 +258,14 @@ DNS
 * SPF: {'present' if hints['spf'] else 'not observed'}
 * DMARC: {'present' if hints['dmarc'] else 'not observed'}
 
-HTTP
+Discovered Assets
+{_terminal_table(["HOST", "IPS", "SOURCE"], asset_rows, max_rows)}
 
-* HTTP services checked: {summary['http_checks_count']}
-* Responsive services: {summary['http_service_count']}
-* Missing HSTS: {missing['hsts']}
-* Missing CSP: {missing['csp']}
+HTTP Services
+{_terminal_table(["URL", "STATUS", "TITLE", "SERVER", "MISSING HEADERS"], http_rows, max_rows)}
 
-TLS
-
-* Certificates observed: {summary['tls_certificate_count']}
-* Earliest expiry: {expiry}"""
+TLS Certificates
+{_terminal_table(["HOST", "ISSUER", "EXPIRES", "DAYS LEFT", "SAN COUNT"], tls_rows, max_rows)}"""
     if output_dir:
         output = Path(output_dir)
         files = "\n".join(f"* {output / name}" for name in (

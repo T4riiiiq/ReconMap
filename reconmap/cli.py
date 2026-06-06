@@ -19,6 +19,7 @@ def common_options(parser: argparse.ArgumentParser) -> None:
     modes.add_argument("--json", action="store_true", help="Print summary JSON to stdout")
     parser.add_argument("--timeout", type=float, default=5.0, help="Per-request timeout in seconds (default: 5)")
     parser.add_argument("--delay", type=float, default=0.25, help="Delay between active requests in seconds (default: 0.25)")
+    parser.add_argument("--max-rows", type=int, default=20, help="Maximum rows per terminal table; 0 shows all (default: 20)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -54,12 +55,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        if getattr(args, "timeout", 0) <= 0 or getattr(args, "delay", 0) < 0:
-            raise ValueError("timeout must be positive and delay cannot be negative")
+        if getattr(args, "timeout", 0) <= 0 or getattr(args, "delay", 0) < 0 or args.max_rows < 0:
+            raise ValueError("timeout must be positive; delay and max-rows cannot be negative")
         output = None if args.no_files else args.output
         progress = _progress if args.verbose else None
         if args.command == "scan":
-            summary = scan(
+            result = scan(
                 normalize_host(args.domain),
                 output,
                 args.subdomains,
@@ -69,11 +70,12 @@ def main(argv: list[str] | None = None) -> int:
                 progress,
             )
         elif args.command == "http":
-            summary = http_only(args.hosts, output, args.timeout, args.delay, progress)
+            result = http_only(args.hosts, output, args.timeout, args.delay, progress)
         else:
-            summary = dns_only(normalize_host(args.domain), output, args.timeout, progress)
+            result = dns_only(normalize_host(args.domain), output, args.timeout, progress)
         if not args.quiet:
-            print(json.dumps(summary, indent=2) if args.json else render_console_summary(summary, output))
+            summary = result.summary if hasattr(result, "summary") else result
+            print(json.dumps(summary, indent=2) if args.json else render_console_summary(result, output, args.max_rows))
         return 0
     except (OSError, ValueError) as exc:
         print(f"reconmap: error: {exc}", file=sys.stderr)

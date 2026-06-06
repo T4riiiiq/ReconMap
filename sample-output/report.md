@@ -1,31 +1,42 @@
 # ReconMap Report: example.com
 
-## Executive Summary
+## DNS Summary
 
-ReconMap identified **2** in-scope public assets, **1** responding HTTP/S service, and **1** validated TLS certificate.
+- Resolved IPs: **1**
+- Nameservers: **0**
+- MX records: **1**
+- SPF: **present**
+- DMARC: **present**
 
 ## Discovered Assets
 
-- `example.com`
-- `www.example.com`
+| Host | IPs | Source |
+| --- | --- | --- |
+| example.com | 192.0.2.10 | root |
+| www.example.com | 192.0.2.20 | manual |
 
-## Exposed HTTP Services
+## HTTP Services
 
-- `https://example.com/`: HTTP 200, title `Example Domain`, server `ExampleServer`
+| URL | Status | Title | Server | Missing Headers |
+| --- | --- | --- | --- | --- |
+| https://example.com/ | 200 | Example Domain | ExampleServer | CSP,Referrer-Policy |
 
-## Missing Security Headers Summary
+## TLS Certificates
 
-- `csp` missing from 1 responding service
-- `referrer_policy` missing from 1 responding service
+| Host | Issuer | Expires | Days Left | SAN Count |
+| --- | --- | --- | --- | --- |
+| example.com | Example CA | 2030-01-01 | 100 | 2 |
 
-## TLS Expiry Notes
+## Security Header Overview
 
-- `example.com`: expires 2030-01-01T00:00:00+00:00 (100 days)
+| Header | Missing From Services |
+| --- | --- |
+| HSTS | 0 |
+| CSP | 1 |
+| X-Frame-Options | 0 |
+| X-Content-Type-Options | 0 |
+| Referrer-Policy | 1 |
 
-## Investigation Notes
-
-- None.
-
-## Disclaimer
+## Informational Disclaimer
 
 **Informational mapping only, not vulnerability validation.**

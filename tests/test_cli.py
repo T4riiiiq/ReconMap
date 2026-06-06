@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from reconmap.cli import main
+from reconmap.reporting import ScanResult
 
 
 SUMMARY = {
@@ -30,6 +31,31 @@ SUMMARY = {
     "investigation_notes": [],
     "disclaimer": "Informational mapping only; results are not vulnerability validation.",
 }
+HOSTS = ["example.com", "www.example.com", "api.example.com"]
+DNS_ROWS = [
+    {"name": host, "type": "A", "value": f"192.0.2.{index}", "error": ""}
+    for index, host in enumerate(HOSTS, 10)
+]
+HTTP_ROWS = [
+    {
+        "host": host, "url": f"https://{host}/", "final_url": f"https://{host}/",
+        "status": 200, "title": f"Example {index}", "server": "ExampleServer", "technologies": "",
+        "hsts": False, "csp": False, "x_frame_options": True, "x_content_type_options": True,
+        "referrer_policy": False, "error": "",
+    }
+    for index, host in enumerate(HOSTS, 1)
+]
+TLS_ROWS = [
+    {
+        "host": host, "subject": f"commonName={host}", "issuer": "organizationName=Example Trust",
+        "sans": host, "expiry_date": "2030-01-01T00:00:00+00:00", "days_until_expiry": 100,
+        "error": "",
+    }
+    for host in HOSTS
+]
+RESULT = ScanResult(SUMMARY, HOSTS, DNS_ROWS, HTTP_ROWS, TLS_ROWS, {
+    "example.com": "root", "www.example.com": "manual", "api.example.com": "passive",
+})
 
 
 def run_cli(arguments):
@@ -41,21 +67,26 @@ def run_cli(arguments):
 
 
 class CliOutputTests(unittest.TestCase):
-    @patch("reconmap.cli.scan", return_value=SUMMARY)
+    @patch("reconmap.cli.scan", return_value=RESULT)
     def test_default_output_is_human_readable_not_raw_json(self, _scan):
         code, stdout, _ = run_cli(["scan", "example.com", "--no-files"])
         self.assertEqual(code, 0)
         self.assertIn("ReconMap scan report for example.com", stdout)
+        self.assertIn("Discovered Assets", stdout)
+        self.assertIn("HTTP Services", stdout)
+        self.assertIn("TLS Certificates", stdout)
+        self.assertIn("www.example.com", stdout)
         with self.assertRaises(json.JSONDecodeError):
             json.loads(stdout)
 
-    @patch("reconmap.cli.scan", return_value=SUMMARY)
+    @patch("reconmap.cli.scan", return_value=RESULT)
     def test_json_output_is_valid_json(self, _scan):
         code, stdout, _ = run_cli(["scan", "example.com", "--json"])
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(stdout)["root_domain"], "example.com")
+        self.assertNotIn("Discovered Assets", stdout)
 
-    @patch("reconmap.cli.scan", return_value=SUMMARY)
+    @patch("reconmap.cli.scan", return_value=RESULT)
     def test_quiet_suppresses_normal_output(self, _scan):
         code, stdout, stderr = run_cli(["scan", "example.com", "--quiet"])
         self.assertEqual((code, stdout, stderr), (0, "", ""))
@@ -65,7 +96,7 @@ class CliOutputTests(unittest.TestCase):
         def fake_scan(domain, output, subdomains, passive, timeout, delay, progress):
             progress(f"Resolving DNS records for {domain}")
             progress("Wrote output/http.csv", success=True)
-            return SUMMARY
+            return RESULT
 
         scan.side_effect = fake_scan
         code, stdout, _ = run_cli(["scan", "example.com", "--verbose"])
@@ -73,6 +104,21 @@ class CliOutputTests(unittest.TestCase):
         self.assertIn("[*] Resolving DNS records for example.com", stdout)
         self.assertIn("[+] Wrote output/http.csv", stdout)
         self.assertIn("ReconMap scan report for example.com", stdout)
+
+    @patch("reconmap.cli.scan", return_value=RESULT)
+    def test_max_rows_limits_each_table(self, _scan):
+        code, stdout, _ = run_cli(["scan", "example.com", "--max-rows", "1"])
+        self.assertEqual(code, 0)
+        self.assertIn("... 2 more rows omitted. Use --max-rows 0 to show all.", stdout)
+        self.assertNotIn("www.example.com", stdout)
+
+    @patch("reconmap.cli.scan", return_value=RESULT)
+    def test_max_rows_zero_shows_all_rows(self, _scan):
+        code, stdout, _ = run_cli(["scan", "example.com", "--max-rows", "0"])
+        self.assertEqual(code, 0)
+        self.assertIn("www.example.com", stdout)
+        self.assertIn("api.example.com", stdout)
+        self.assertNotIn("more rows omitted", stdout)
 
     @patch("reconmap.scanner.collect_dns", return_value=[])
     def test_output_option_writes_files(self, _collect_dns):
