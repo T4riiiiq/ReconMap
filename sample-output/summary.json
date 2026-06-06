@@ -1,0 +1,17 @@
+{
+  "root_domain": "example.com",
+  "resolved_ips": ["192.0.2.10"],
+  "email_security_hints": {"spf": true, "dmarc": true, "dkim_hint": false},
+  "asset_count": 2,
+  "http_service_count": 1,
+  "tls_certificate_count": 1,
+  "missing_security_headers": {
+    "hsts": 0,
+    "csp": 1,
+    "x_frame_options": 0,
+    "x_content_type_options": 0,
+    "referrer_policy": 1
+  },
+  "investigation_notes": [],
+  "disclaimer": "Informational mapping only; results are not vulnerability validation."
+}

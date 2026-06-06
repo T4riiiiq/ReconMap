@@ -1,0 +1,5 @@
+name,type,value,error
+example.com,A,192.0.2.10,
+example.com,MX,10 mail.example.com,
+example.com,TXT,v=spf1 -all,
+_dmarc.example.com,TXT,v=DMARC1; p=reject,

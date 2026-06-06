@@ -1,0 +1,4 @@
+# Known, explicitly supplied hosts
+www.example.com
+api.example.com
+www.example.com
