@@ -3,7 +3,7 @@ from __future__ import annotations
 import socket
 import ssl
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 
 def _name(parts: tuple[tuple[tuple[str, str], ...], ...]) -> str:
@@ -40,13 +40,20 @@ def inspect_tls(host: str, timeout: float = 5.0) -> dict[str, Any]:
     return row
 
 
-def inspect_hosts(hosts: list[str], timeout: float, delay: float) -> list[dict[str, Any]]:
+def inspect_hosts(
+    hosts: list[str],
+    timeout: float,
+    delay: float,
+    progress: Callable[[str], None] | None = None,
+) -> list[dict[str, Any]]:
     from reconmap.util import RateLimiter
 
     limiter = RateLimiter(delay)
     rows = []
     for host in hosts:
         limiter.wait()
+        if progress:
+            progress(f"Fetching TLS certificate for {host}:443")
         row = inspect_tls(host, timeout)
         if not row["error"] or row["subject"]:
             rows.append(row)

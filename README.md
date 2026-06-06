@@ -50,15 +50,52 @@ python -m pip install -e .
 
 ## Usage
 
+Normal scan, printing a concise Nmap-style summary to the terminal:
+
 ```bash
-reconmap scan example.com -o output/
-reconmap scan example.com --subdomains subs.txt -o output/
-reconmap scan example.com --passive -o output/
-reconmap http hosts.txt -o output/
-reconmap dns example.com -o output/
+reconmap scan example.com
 ```
 
-Every active command supports a timeout, and HTTP/TLS commands support a delay:
+Print live progress followed by the concise summary:
+
+```bash
+reconmap scan example.com --verbose
+```
+
+Print summary JSON only:
+
+```bash
+reconmap scan example.com --json
+```
+
+Suppress normal output and print errors only:
+
+```bash
+reconmap scan example.com --quiet
+```
+
+Write the six report files and print the concise summary:
+
+```bash
+reconmap scan example.com -o output/
+```
+
+Explicitly prevent file output, even when `-o` is supplied:
+
+```bash
+reconmap scan example.com -o output/ --no-files
+```
+
+The same output modes apply to every command:
+
+```bash
+reconmap scan example.com --subdomains subs.txt -o output/
+reconmap scan example.com --passive -o output/
+reconmap http hosts.txt --json
+reconmap dns example.com --verbose -o output/
+```
+
+Every active command supports a timeout and request delay:
 
 ```bash
 reconmap scan example.com -o output/ --timeout 8 --delay 0.5
@@ -79,7 +116,7 @@ If no key is configured or the provider is unavailable, the scan continues and r
 
 ## Output
 
-Each command writes:
+Without `-o`, commands print results to stdout and do not write files. With `-o`, each command writes:
 
 - `hosts.csv`
 - `dns.csv`

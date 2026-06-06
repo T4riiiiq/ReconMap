@@ -5,12 +5,18 @@ import json
 import sys
 
 from reconmap import __version__
+from reconmap.reporting import render_console_summary
 from reconmap.scanner import dns_only, http_only, scan
 from reconmap.util import normalize_host
 
 
 def common_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("-o", "--output", required=True, help="Output directory")
+    parser.add_argument("-o", "--output", help="Write output files to this directory")
+    parser.add_argument("--no-files", action="store_true", help="Do not write output files")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("-v", "--verbose", action="store_true", help="Print live progress and final summary")
+    modes.add_argument("-q", "--quiet", action="store_true", help="Print errors only")
+    modes.add_argument("--json", action="store_true", help="Print summary JSON to stdout")
     parser.add_argument("--timeout", type=float, default=5.0, help="Per-request timeout in seconds (default: 5)")
     parser.add_argument("--delay", type=float, default=0.25, help="Delay between active requests in seconds (default: 0.25)")
 
@@ -36,9 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     dns_parser = commands.add_parser("dns", help="Collect public DNS records")
     dns_parser.add_argument("domain", help="Domain to map")
-    dns_parser.add_argument("-o", "--output", required=True, help="Output directory")
-    dns_parser.add_argument("--timeout", type=float, default=5.0, help="DNS timeout in seconds (default: 5)")
+    common_options(dns_parser)
     return parser
+
+
+def _progress(message: str, success: bool = False) -> None:
+    print(f"[{'+' if success else '*'}] {message}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -47,20 +56,24 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if getattr(args, "timeout", 0) <= 0 or getattr(args, "delay", 0) < 0:
             raise ValueError("timeout must be positive and delay cannot be negative")
+        output = None if args.no_files else args.output
+        progress = _progress if args.verbose else None
         if args.command == "scan":
             summary = scan(
                 normalize_host(args.domain),
-                args.output,
+                output,
                 args.subdomains,
                 args.passive,
                 args.timeout,
                 args.delay,
+                progress,
             )
         elif args.command == "http":
-            summary = http_only(args.hosts, args.output, args.timeout, args.delay)
+            summary = http_only(args.hosts, output, args.timeout, args.delay, progress)
         else:
-            summary = dns_only(normalize_host(args.domain), args.output, args.timeout)
-        print(json.dumps(summary, indent=2))
+            summary = dns_only(normalize_host(args.domain), output, args.timeout, progress)
+        if not args.quiet:
+            print(json.dumps(summary, indent=2) if args.json else render_console_summary(summary, output))
         return 0
     except (OSError, ValueError) as exc:
         print(f"reconmap: error: {exc}", file=sys.stderr)

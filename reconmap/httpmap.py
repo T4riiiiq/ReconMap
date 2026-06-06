@@ -5,7 +5,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from html import unescape
-from typing import Any
+from typing import Any, Callable
 
 from reconmap.util import RateLimiter
 
@@ -91,13 +91,21 @@ def probe_url(url: str, timeout: float) -> dict[str, Any]:
         }
 
 
-def fingerprint_hosts(hosts: list[str], timeout: float, delay: float) -> list[dict[str, Any]]:
+def fingerprint_hosts(
+    hosts: list[str],
+    timeout: float,
+    delay: float,
+    progress: Callable[[str], None] | None = None,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     limiter = RateLimiter(delay)
     for host in hosts:
-        for scheme in ("https", "http"):
+        for scheme in ("http", "https"):
             limiter.wait()
-            row = probe_url(f"{scheme}://{host}/", timeout)
+            url = f"{scheme}://{host}/"
+            if progress:
+                progress(f"Checking {scheme.upper()}: {url}")
+            row = probe_url(url, timeout)
             if not row["error"] or row["status"]:
                 rows.append(row)
     return rows
