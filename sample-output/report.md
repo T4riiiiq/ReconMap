@@ -37,6 +37,19 @@
 | X-Content-Type-Options | 0 |
 | Referrer-Policy | 1 |
 
+## Discovery Chains
+
+| Source | Evidence | Target | Depth | Status |
+| --- | --- | --- | --- | --- |
+| example.com | TLS SAN | www.example.com | 1 | queued |
+
+## Relationship Map
+
+```text
+example.com
+`-- TLS SAN: www.example.com [queued]
+```
+
 ## Informational Disclaimer
 
 **Informational mapping only, not vulnerability validation.**

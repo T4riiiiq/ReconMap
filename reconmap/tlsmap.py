@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import socket
 import ssl
+import ipaddress
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -10,9 +11,10 @@ def _name(parts: tuple[tuple[tuple[str, str], ...], ...]) -> str:
     return ", ".join(f"{key}={value}" for group in parts for key, value in group)
 
 
-def inspect_tls(host: str, timeout: float = 5.0) -> dict[str, Any]:
+def inspect_tls(host: str, timeout: float = 5.0, port: int = 443) -> dict[str, Any]:
     row: dict[str, Any] = {
         "host": host,
+        "port": port,
         "subject": "",
         "issuer": "",
         "sans": "",
@@ -22,7 +24,13 @@ def inspect_tls(host: str, timeout: float = 5.0) -> dict[str, Any]:
     }
     try:
         context = ssl.create_default_context()
-        with socket.create_connection((host, 443), timeout=timeout) as raw_socket:
+        try:
+            ipaddress.ip_address(host)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        except ValueError:
+            pass
+        with socket.create_connection((host, port), timeout=timeout) as raw_socket:
             with context.wrap_socket(raw_socket, server_hostname=host) as tls_socket:
                 cert = tls_socket.getpeercert()
         expiry = datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)

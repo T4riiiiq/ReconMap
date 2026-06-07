@@ -93,7 +93,7 @@ class CliOutputTests(unittest.TestCase):
 
     @patch("reconmap.cli.scan")
     def test_verbose_includes_progress_markers(self, scan):
-        def fake_scan(domain, output, subdomains, passive, timeout, delay, progress):
+        def fake_scan(domain, output, subdomains, passive, timeout, delay, progress, *pivot_options):
             progress(f"Resolving DNS records for {domain}")
             progress("Wrote output/http.csv", success=True)
             return RESULT

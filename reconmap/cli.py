@@ -7,7 +7,7 @@ import sys
 from reconmap import __version__
 from reconmap.reporting import render_console_summary
 from reconmap.scanner import dns_only, http_only, scan
-from reconmap.util import normalize_host
+from reconmap.util import normalize_host, normalize_target
 
 
 def common_options(parser: argparse.ArgumentParser) -> None:
@@ -35,6 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("domain", help="Root domain to map")
     scan_parser.add_argument("--subdomains", help="File containing known in-scope subdomains")
     scan_parser.add_argument("--passive", action="store_true", help="Use configured passive API providers")
+    scan_parser.add_argument("--pivot", action="store_true", help="Enable bounded evidence-based recursive pivoting")
+    scan_parser.add_argument("--pivot-depth", type=int, default=1, help="Maximum pivot depth (default: 1)")
+    scan_parser.add_argument("--max-assets", type=int, default=50, help="Maximum assets collected during pivoting (default: 50)")
+    scope = scan_parser.add_mutually_exclusive_group()
+    scope.add_argument("--same-domain-only", action="store_true", default=True, help="Pivot only within the related registrable domain (default)")
+    scope.add_argument("--include-external", action="store_true", help="Allow recursive collection of external evidence targets")
+    scan_parser.add_argument("--max-references", type=int, default=100, help="Maximum pivot evidence references (default: 100)")
     common_options(scan_parser)
 
     http_parser = commands.add_parser("http", help="Fingerprint HTTP/S for a host list")
@@ -55,19 +62,32 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        if getattr(args, "timeout", 0) <= 0 or getattr(args, "delay", 0) < 0 or args.max_rows < 0:
+        if (
+            getattr(args, "timeout", 0) <= 0
+            or getattr(args, "delay", 0) < 0
+            or args.max_rows < 0
+            or getattr(args, "pivot_depth", 0) < 0
+            or getattr(args, "max_assets", 1) <= 0
+            or getattr(args, "max_references", 0) < 0
+        ):
             raise ValueError("timeout must be positive; delay and max-rows cannot be negative")
         output = None if args.no_files else args.output
         progress = _progress if args.verbose else None
         if args.command == "scan":
             result = scan(
-                normalize_host(args.domain),
+                normalize_target(args.domain),
                 output,
                 args.subdomains,
                 args.passive,
                 args.timeout,
                 args.delay,
                 progress,
+                args.pivot,
+                args.pivot_depth,
+                args.max_assets,
+                not args.include_external,
+                args.include_external,
+                args.max_references,
             )
         elif args.command == "http":
             result = http_only(args.hosts, output, args.timeout, args.delay, progress)

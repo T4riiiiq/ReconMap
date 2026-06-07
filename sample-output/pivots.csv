@@ -1,0 +1,2 @@
+source,relation,target,depth,status
+example.com,TLS SAN,www.example.com,1,queued

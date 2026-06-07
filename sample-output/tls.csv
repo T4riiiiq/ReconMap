@@ -1,2 +1,2 @@
-host,subject,issuer,sans,expiry_date,days_until_expiry,error
-example.com,commonName=example.com,commonName=Example CA,example.com; www.example.com,2030-01-01T00:00:00+00:00,100,
+host,port,subject,issuer,sans,expiry_date,days_until_expiry,error
+example.com,443,commonName=example.com,commonName=Example CA,example.com; www.example.com,2030-01-01T00:00:00+00:00,100,

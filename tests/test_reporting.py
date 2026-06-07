@@ -2,11 +2,19 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from reconmap.reporting import write_outputs
+from reconmap.dnsmap import collect_dns
 
 
 class ReportingTests(unittest.TestCase):
+    @patch("reconmap.dnsmap.query_record", return_value=([], ""))
+    def test_dns_collection_requests_intelligence_record_types(self, query):
+        collect_dns("example.com", 1)
+        requested = {call.args[1] for call in query.call_args_list}
+        self.assertTrue({"SOA", "CAA", "SRV"}.issubset(requested))
+
     def test_writes_all_expected_outputs(self):
         dns_rows = [{"name": "example.com", "type": "A", "value": "192.0.2.10", "error": ""}]
         http_rows = [{
@@ -22,7 +30,10 @@ class ReportingTests(unittest.TestCase):
         }]
         with tempfile.TemporaryDirectory() as directory:
             write_outputs(directory, "example.com", ["example.com"], dns_rows, http_rows, tls_rows, [])
-            expected = {"hosts.csv", "dns.csv", "http.csv", "tls.csv", "summary.json", "report.md"}
+            expected = {
+                "hosts.csv", "dns.csv", "http.csv", "tls.csv", "pivots.csv",
+                "relationships.txt", "summary.json", "report.md",
+            }
             self.assertEqual({path.name for path in Path(directory).iterdir()}, expected)
             summary = json.loads((Path(directory) / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["asset_count"], 1)
@@ -30,9 +41,16 @@ class ReportingTests(unittest.TestCase):
             self.assertIn("Informational mapping only", report)
             self.assertIn("## DNS Summary", report)
             self.assertIn("## Discovered Assets", report)
+            self.assertIn("## DNS Records", report)
             self.assertIn("## HTTP Services", report)
             self.assertIn("## TLS Certificates", report)
             self.assertIn("## Security Header Overview", report)
+            self.assertIn("## Attack Surface Inventory", report)
+            self.assertIn("## Interesting Redirects", report)
+            self.assertIn("## Interesting Cloud References", report)
+            self.assertIn("## Interesting Email Infrastructure", report)
+            self.assertIn("## Discovery Chains", report)
+            self.assertIn("## Relationship Map", report)
 
     def test_empty_domainkey_query_is_not_a_dkim_hint(self):
         from reconmap.dnsmap import email_security_hints

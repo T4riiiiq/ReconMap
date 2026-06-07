@@ -1,2 +1,2 @@
-host,url,final_url,status,title,server,technologies,hsts,csp,x_frame_options,x_content_type_options,referrer_policy,error
-example.com,https://example.com/,https://example.com/,200,Example Domain,ExampleServer,ExampleServer,True,False,True,True,False,
+host,url,final_url,redirect_chain,status,title,server,content_length,cookies,technologies,hsts,csp,x_frame_options,x_content_type_options,referrer_policy,error
+example.com,https://example.com/,https://example.com/,,200,Example Domain,ExampleServer,1256,,ExampleServer,True,False,True,True,False,

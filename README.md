@@ -2,6 +2,8 @@
 
 ReconMap is a lightweight attack surface mapping utility for SOC, DFIR, and security assessment workflows.
 
+Its job is to consolidate public attack surface intelligence that analysts would otherwise gather manually from DNS, certificates, HTTP responses, and provider-specific indicators. ReconMap exposes evidence; the analyst remains the decision engine.
+
 It helps analysts quickly understand:
 
 - what public assets exist
@@ -23,16 +25,62 @@ ReconMap is **not**:
 - a password testing tool
 - a replacement for Nmap, Nuclei, or Burp
 
-It performs ordinary public DNS queries, at most one HTTP and HTTPS request per known host, and a TLS handshake. Subdomain brute forcing is deliberately absent. Passive discovery is disabled by default.
+It performs ordinary public DNS queries, a small fixed set of HTTP/S requests, and TLS handshakes. Subdomain brute forcing is deliberately absent. Passive discovery is disabled by default.
+
+Redirect destinations are recorded for intelligence. ReconMap follows same-host redirects only; it does not automatically expand active checks onto external redirect targets.
+
+### Evidence-Based Pivoting
+
+Pivoting is disabled by default. Enable it explicitly:
+
+```bash
+reconmap scan example.com --pivot
+reconmap scan example.com --pivot --pivot-depth 2 --max-assets 30
+reconmap scan 192.0.2.10 --pivot
+```
+
+ReconMap can pivot from PTR records, CNAME/MX/NS infrastructure names, TLS SANs, HTTP redirects, HTML/JavaScript references, CSP references, and cloud evidence. Every relationship is recorded even when policy prevents recursive collection.
+
+Pivot safety controls:
+
+```bash
+reconmap scan example.com --pivot \
+  --pivot-depth 1 \
+  --max-assets 50 \
+  --max-references 100 \
+  --same-domain-only
+```
+
+- Same-domain recursive collection is the default.
+- External providers and identity services remain evidence-only unless `--include-external` is supplied.
+- IP targets use PTR plus HTTP/S validation on ports `80`, `443`, `8080`, and `8443` only.
+- ReconMap does not perform generalized port scanning, brute force, object listing, permission testing, vulnerability scanning, or exploitation.
+
+## Architecture
+
+ReconMap separates three responsibilities:
+
+- **Collectors** gather public DNS, certificate, and lightweight HTTP/TLS observations.
+- **Intelligence analysis** derives provider indicators, inventory categories, and interesting artifacts from collected evidence.
+- **Renderers** expose both raw observations and derived indicators without declaring vulnerabilities or making assessment decisions.
+
+Provider and asset classifications are evidence-based hints. They are intentionally presented for analyst review rather than treated as conclusions.
 
 ## Features
 
-- DNS overview: A, AAAA, NS, MX, TXT, SPF, DMARC, and DKIM hints
+- DNS intelligence: A, AAAA, NS, MX, TXT, SOA, CAA, selected SRV records, SPF, DMARC, and DKIM hints
 - Known-host discovery from a manual file
-- Optional SecurityTrails passive discovery when an API key is configured
-- HTTP status, title, server, and header/meta-only technology hints
+- Optional crt.sh certificate-derived discovery and SecurityTrails passive discovery
+- Current TLS certificate subject, issuer, SANs, and expiry
+- Historical certificate-derived names from crt.sh
+- HTTP status, title, redirect chain, server, content length, cookies, and header/meta-only technology hints
 - HSTS, CSP, X-Frame-Options, X-Content-Type-Options, and Referrer-Policy presence
-- TLS certificate subject, issuer, SANs, expiry date, and days until expiry
+- Cloud indicators for Cloudflare, AWS, Azure, GCP, Fastly, and Akamai
+- Cloud reference indicators for CloudFront, API Gateway, S3, Azure Blob, and Google Storage
+- Identity indicators for Okta, Auth0, Microsoft Entra, Keycloak, and OneLogin
+- Email infrastructure indicators for Microsoft 365, Google Workspace, Mimecast, Proofpoint, and Cisco ESA
+- Evidence-based asset inventory categories: Web, API, VPN, Mail, Auth, Admin, and Other
+- Dedicated report artifacts for interesting hosts, redirects, certificates, cloud references, and email infrastructure
 - CSV, JSON, and Markdown outputs
 - Configurable timeouts and request delay
 - Graceful per-asset network error handling
@@ -81,7 +129,7 @@ Suppress normal output and print errors only:
 reconmap scan example.com --quiet
 ```
 
-Write the six report files and print the concise summary:
+Write the report artifacts and print the concise summary:
 
 ```bash
 reconmap scan example.com -o output/
@@ -112,14 +160,14 @@ Manual host files contain one hostname per line. Blank lines and lines beginning
 
 ### Passive Discovery
 
-Passive discovery is opt-in. Configure the provider key and add `--passive`:
+Passive discovery is opt-in. `--passive` queries crt.sh without an API key and also uses SecurityTrails when its key is configured:
 
 ```bash
 export RECONMAP_SECURITYTRAILS_API_KEY="..."
 reconmap scan example.com --passive -o output/
 ```
 
-If no key is configured or the provider is unavailable, the scan continues and records a note.
+If a provider is unavailable, the scan continues and records a note. Passive names retain their discovery source in the report.
 
 ## Output
 
@@ -129,10 +177,14 @@ Without `-o`, commands print results to stdout and do not write files. With `-o`
 - `dns.csv`
 - `http.csv`
 - `tls.csv`
+- `pivots.csv`
+- `relationships.txt`
 - `summary.json`
 - `report.md`
 
 See [`sample-output/`](sample-output/) for an example.
+
+`summary.json` includes derived intelligence indicators and inventory classifications. These are observations based on public strings and naming patterns, not security findings or vulnerability conclusions.
 
 ## Testing
 

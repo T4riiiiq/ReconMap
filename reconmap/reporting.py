@@ -3,11 +3,13 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
 from typing import Any, Callable
 
 from reconmap.dnsmap import email_security_hints, resolved_ips
 from reconmap.httpmap import SECURITY_HEADERS
+from reconmap.pivot import relationship_text
 
 
 @dataclass
@@ -18,6 +20,7 @@ class ScanResult:
     http_rows: list[dict[str, Any]]
     tls_rows: list[dict[str, Any]]
     sources: dict[str, str]
+    relationships: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]], fields: list[str]) -> None:
@@ -98,23 +101,65 @@ def render_report(result: ScanResult) -> str:
         [host, ", ".join(resolved_ips(result.dns_rows, host)) or "-", result.sources.get(host, "known")]
         for host in result.hosts
     ]
+    dns_record_rows = [
+        [row["name"], row["type"], row["value"] or "-", row["error"] or "-"]
+        for row in result.dns_rows
+    ]
     http_rows = [
-        [row["url"], row["status"], row["title"] or "-", row["server"] or "-", _missing_headers(row)]
+        [
+            row["url"],
+            row["status"],
+            row["title"] or "-",
+            row["server"] or "-",
+            row.get("content_length", "") or "-",
+            row.get("redirect_chain", "") or "-",
+            row.get("cookies", "") or "-",
+            row.get("technologies", "") or "-",
+            row.get("referenced_hosts", "") or "-",
+            _missing_headers(row),
+        ]
         for row in result.http_rows
     ]
     tls_rows = [
         [
-            row["host"],
+            f"{row['host']}:{row.get('port', 443)}",
             _issuer_name(str(row["issuer"])),
             str(row["expiry_date"])[:10],
             row["days_until_expiry"],
             len([san for san in str(row["sans"]).split("; ") if san]),
+            row["sans"] or "-",
         ]
         for row in result.tls_rows
     ]
     header_rows = [
         [name, count]
         for name, count in summary["missing_security_headers"].items()
+    ]
+    intelligence = summary.get("intelligence", {})
+    inventory_rows = [
+        [row["host"], row["category"], result.sources.get(row["host"], "known")]
+        for row in intelligence.get("asset_inventory", [])
+    ]
+    redirect_rows = [
+        [row["url"], row["chain"]]
+        for row in intelligence.get("interesting_redirects", [])
+    ]
+    certificate_rows = [
+        [row["host"], _issuer_name(row["issuer"]), str(row["expires"])[:10], row["sans"]]
+        for row in intelligence.get("interesting_certificates", [])
+    ]
+    provider_rows = [
+        ["Cloud", ", ".join(intelligence.get("cloud_providers", [])) or "-"],
+        ["Identity", ", ".join(intelligence.get("identity_providers", [])) or "-"],
+        ["Email", ", ".join(intelligence.get("email_providers", [])) or "-"],
+    ]
+    interesting_hosts = [
+        [row["host"], row["category"]]
+        for row in intelligence.get("interesting_hosts", [])
+    ]
+    relationship_rows = [
+        [row["source"], row["relation"], row["target"], row["depth"], row["status"]]
+        for row in result.relationships
     ]
     return f"""# ReconMap Report: {summary['root_domain']}
 
@@ -130,17 +175,63 @@ def render_report(result: ScanResult) -> str:
 
 {_markdown_table(["Host", "IPs", "Source"], asset_rows)}
 
+## DNS Records
+
+{_markdown_table(["Name", "Type", "Value", "Error"], dns_record_rows)}
+
 ## HTTP Services
 
-{_markdown_table(["URL", "Status", "Title", "Server", "Missing Headers"], http_rows)}
+{_markdown_table(["URL", "Status", "Title", "Server", "Content Length", "Redirect Chain", "Cookies", "Technologies", "Referenced Hostnames", "Missing Headers"], http_rows)}
 
 ## TLS Certificates
 
-{_markdown_table(["Host", "Issuer", "Expires", "Days Left", "SAN Count"], tls_rows)}
+{_markdown_table(["Host", "Issuer", "Expires", "Days Left", "SAN Count", "SANs"], tls_rows)}
 
 ## Security Header Overview
 
 {_markdown_table(["Header", "Missing From Services"], header_rows)}
+
+## Attack Surface Inventory
+
+{_markdown_table(["Host", "Category", "Source"], inventory_rows)}
+
+## Provider Intelligence
+
+{_markdown_table(["Area", "Observed Indicators"], provider_rows)}
+
+## Historical Certificate SANs
+
+{_markdown_table(["Certificate-Derived Name"], [[name] for name in summary.get("historical_sans", [])])}
+
+## Interesting Hosts
+
+{_markdown_table(["Host", "Category"], interesting_hosts)}
+
+## Interesting Redirects
+
+{_markdown_table(["URL", "Redirect Chain"], redirect_rows)}
+
+## Interesting Certificates
+
+{_markdown_table(["Host", "Issuer", "Expires", "SANs"], certificate_rows)}
+
+## Interesting Cloud References
+
+{_markdown_table(["Provider"], [[name] for name in intelligence.get("interesting_cloud_references", [])])}
+
+## Interesting Email Infrastructure
+
+{_markdown_table(["Provider"], [[name] for name in intelligence.get("interesting_email_infrastructure", [])])}
+
+## Discovery Chains
+
+{_markdown_table(["Source", "Evidence", "Target", "Depth", "Status"], relationship_rows)}
+
+## Relationship Map
+
+```text
+{relationship_text(summary['root_domain'], result.relationships).rstrip()}
+```
 
 ## Informational Disclaimer
 
@@ -159,6 +250,7 @@ def write_outputs(
     summary: dict[str, Any] | None = None,
     progress: Callable[..., None] | None = None,
     sources: dict[str, str] | None = None,
+    relationships: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -172,22 +264,39 @@ def write_outputs(
     _write_csv(
         output / "http.csv",
         http_rows,
-        ["host", "url", "final_url", "status", "title", "server", "technologies", *SECURITY_HEADERS, "error"],
+        [
+            "host", "url", "final_url", "redirect_chain", "status", "title", "server",
+            "content_length", "cookies", "technologies", *SECURITY_HEADERS, "error",
+            "csp_value", "referenced_hosts",
+        ],
     )
     if progress:
         progress(f"Wrote {output / 'http.csv'}", success=True)
     _write_csv(
         output / "tls.csv",
         tls_rows,
-        ["host", "subject", "issuer", "sans", "expiry_date", "days_until_expiry", "error"],
+        ["host", "port", "subject", "issuer", "sans", "expiry_date", "days_until_expiry", "error"],
     )
     if progress:
         progress(f"Wrote {output / 'tls.csv'}", success=True)
+    _write_csv(
+        output / "pivots.csv",
+        relationships or [],
+        ["source", "relation", "target", "depth", "status"],
+    )
+    if progress:
+        progress(f"Wrote {output / 'pivots.csv'}", success=True)
+    (output / "relationships.txt").write_text(
+        relationship_text(domain, relationships or []),
+        encoding="utf-8",
+    )
+    if progress:
+        progress(f"Wrote {output / 'relationships.txt'}", success=True)
     summary = summary or build_summary(domain, hosts, dns_rows, http_rows, tls_rows, notes)
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     if progress:
         progress(f"Wrote {output / 'summary.json'}", success=True)
-    result = ScanResult(summary, hosts, dns_rows, http_rows, tls_rows, sources or {})
+    result = ScanResult(summary, hosts, dns_rows, http_rows, tls_rows, sources or {}, relationships or [])
     (output / "report.md").write_text(render_report(result), encoding="utf-8")
     if progress:
         progress(f"Wrote {output / 'report.md'}", success=True)
@@ -240,13 +349,24 @@ def render_console_summary(
     ]
     tls_rows = [
         [
-            row["host"],
+            f"{row['host']}:{row.get('port', 443)}",
             _issuer_name(str(row["issuer"])),
             str(row["expiry_date"])[:10],
             row["days_until_expiry"],
             len([san for san in str(row["sans"]).split("; ") if san]),
         ]
         for row in result.tls_rows
+    ]
+    intelligence = summary.get("intelligence", {})
+    intelligence_rows = [
+        ["Cloud", ", ".join(intelligence.get("cloud_providers", [])) or "-"],
+        ["Identity", ", ".join(intelligence.get("identity_providers", [])) or "-"],
+        ["Email", ", ".join(intelligence.get("email_providers", [])) or "-"],
+        ["Cloud References", ", ".join(intelligence.get("interesting_cloud_references", [])) or "-"],
+    ]
+    relationship_rows = [
+        [row["source"], row["relation"], row["target"], row["status"]]
+        for row in result.relationships
     ]
     text = f"""ReconMap scan report for {title}
 
@@ -265,11 +385,18 @@ HTTP Services
 {_terminal_table(["URL", "STATUS", "TITLE", "SERVER", "MISSING HEADERS"], http_rows, max_rows)}
 
 TLS Certificates
-{_terminal_table(["HOST", "ISSUER", "EXPIRES", "DAYS LEFT", "SAN COUNT"], tls_rows, max_rows)}"""
+{_terminal_table(["HOST", "ISSUER", "EXPIRES", "DAYS LEFT", "SAN COUNT"], tls_rows, max_rows)}
+
+Intelligence Overview
+{_terminal_table(["AREA", "OBSERVED INDICATORS"], intelligence_rows, max_rows)}
+
+Discovery Chains
+{_terminal_table(["SOURCE", "EVIDENCE", "TARGET", "STATUS"], relationship_rows, max_rows)}"""
     if output_dir:
         output = Path(output_dir)
         files = "\n".join(f"* {output / name}" for name in (
-            "hosts.csv", "dns.csv", "http.csv", "tls.csv", "summary.json", "report.md"
+            "hosts.csv", "dns.csv", "http.csv", "tls.csv", "pivots.csv",
+            "relationships.txt", "summary.json", "report.md"
         ))
         text += f"\n\nOutput written to:\n\n{files}"
     return text

@@ -4,6 +4,7 @@ from typing import Any
 
 import dns.exception
 import dns.resolver
+import dns.reversename
 
 
 def _clean(value: str) -> str:
@@ -29,9 +30,15 @@ def collect_dns(domain: str, timeout: float = 5.0) -> list[dict[str, Any]]:
     requests = [
         (domain, "A"),
         (domain, "AAAA"),
+        (domain, "CNAME"),
         (domain, "NS"),
         (domain, "MX"),
         (domain, "TXT"),
+        (domain, "SOA"),
+        (domain, "CAA"),
+        (f"_sip._tcp.{domain}", "SRV"),
+        (f"_sip._tls.{domain}", "SRV"),
+        (f"_submission._tcp.{domain}", "SRV"),
         (f"_dmarc.{domain}", "TXT"),
         (f"_domainkey.{domain}", "TXT"),
     ]
@@ -46,6 +53,17 @@ def collect_dns(domain: str, timeout: float = 5.0) -> list[dict[str, Any]]:
         elif error:
             rows.append({"name": name, "type": record_type, "value": "", "error": error})
     return rows
+
+
+def collect_ptr(address: str, timeout: float = 5.0) -> list[dict[str, Any]]:
+    try:
+        name = dns.reversename.from_address(address).to_text()
+    except ValueError as exc:
+        return [{"name": address, "type": "PTR", "value": "", "error": str(exc)}]
+    values, error = query_record(name, "PTR", timeout)
+    if values:
+        return [{"name": address, "type": "PTR", "value": value, "error": ""} for value in values]
+    return [{"name": address, "type": "PTR", "value": "", "error": error}] if error else []
 
 
 def resolved_ips(rows: list[dict[str, Any]], host: str) -> list[str]:
