@@ -24,6 +24,7 @@ def common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--timeout", type=float, default=5.0, help="Per-request timeout in seconds (default: 5)")
     parser.add_argument("--delay", type=float, default=0.25, help="Delay between active requests in seconds (default: 0.25)")
     parser.add_argument("--max-rows", type=int, default=20, help="Maximum rows per terminal table; 0 shows all (default: 20)")
+    parser.add_argument("--no-truncate", action="store_true", help="Show full terminal values without truncation")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -107,7 +108,17 @@ def main(argv: list[str] | None = None) -> int:
             result = dns_only(normalize_host(args.domain), output, args.timeout, progress)
         if not args.quiet:
             summary = result.summary if hasattr(result, "summary") else result
-            print(json.dumps(summary, indent=2) if args.json else render_console_summary(result, output, args.max_rows))
+            print(
+                json.dumps(summary, indent=2)
+                if args.json
+                else render_console_summary(
+                    result,
+                    output,
+                    args.max_rows,
+                    no_truncate=args.no_truncate,
+                    show_external_references=getattr(args, "show_external_references", False),
+                )
+            )
         return 0
     except (OSError, ValueError) as exc:
         print(f"reconmap: error: {exc}", file=sys.stderr)

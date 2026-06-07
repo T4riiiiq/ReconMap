@@ -2,12 +2,13 @@ import io
 import json
 import tempfile
 import unittest
+from copy import deepcopy
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
 from reconmap.cli import main
-from reconmap.reporting import ScanResult
+from reconmap.reporting import ScanResult, render_console_summary
 
 
 SUMMARY = {
@@ -87,7 +88,7 @@ class CliOutputTests(unittest.TestCase):
         code, stdout, _ = run_cli(["scan", "example.com", "--no-files"])
         self.assertEqual(code, 0)
         self.assertIn("ReconMap scan report for example.com", stdout)
-        self.assertIn("Discovered Assets", stdout)
+        self.assertIn("Discovered Hostnames", stdout)
         self.assertIn("HTTP Services", stdout)
         self.assertIn("TLS Certificates", stdout)
         self.assertIn("www.example.com", stdout)
@@ -151,7 +152,81 @@ class CliOutputTests(unittest.TestCase):
             code, stdout, _ = run_cli(["dns", "example.com", "-o", str(output), "--no-files"])
             self.assertEqual(code, 0)
             self.assertIn("ReconMap scan report for example.com", stdout)
-            self.assertFalse(output.exists())
+        self.assertFalse(output.exists())
+
+    def test_ip_is_not_listed_as_hostname_and_resolved_ips_map_to_hosts(self):
+        summary = deepcopy(SUMMARY)
+        summary["root_domain"] = "192.0.2.10"
+        result = ScanResult(
+            summary,
+            ["192.0.2.10", "example.com", "www.example.com"],
+            [
+                {"name": "192.0.2.10", "type": "PTR", "value": "example.com", "error": ""},
+                {"name": "www.example.com", "type": "A", "value": "192.0.2.10", "error": ""},
+            ],
+            [],
+            [],
+            {"192.0.2.10": "root", "example.com": "PTR", "www.example.com": "TLS SAN"},
+        )
+
+        output = render_console_summary(result)
+        hostname_section = output.split("Discovered Hostnames\n", 1)[1].split("\n\nResolved IPs", 1)[0]
+        resolved_section = output.split("Resolved IPs\n", 1)[1].split("\n\nHTTP Services", 1)[0]
+        self.assertIn("IP Target\n* 192.0.2.10", output)
+        self.assertNotIn("192.0.2.10", hostname_section)
+        self.assertIn("192.0.2.10", resolved_section)
+        self.assertIn("example.com, www.example.com", resolved_section)
+
+    def test_pivot_statuses_are_human_readable(self):
+        result = ScanResult(
+            SUMMARY,
+            HOSTS,
+            DNS_ROWS,
+            [],
+            [],
+            {},
+            [{
+                "source": "example.com",
+                "relation": "PTR",
+                "target": "server.example.com",
+                "depth": 1,
+                "status": "depth-limit",
+            }],
+        )
+        self.assertIn("not-scanned-depth-limit", render_console_summary(result))
+
+    @patch("reconmap.cli.scan")
+    def test_external_references_are_summarized_by_default_and_expand_on_request(self, scan):
+        summary = deepcopy(SUMMARY)
+        summary["external_references"] = [
+            {"source": "example.com", "target": "fonts.example.net"},
+            {"source": "example.com", "target": "schema.example.net"},
+        ]
+        scan.return_value = ScanResult(summary, HOSTS, DNS_ROWS, [], [], {})
+
+        _, default_output, _ = run_cli(["scan", "example.com"])
+        _, expanded_output, _ = run_cli(["scan", "example.com", "--show-external-references"])
+        self.assertIn("2 observed. Use --show-external-references to display.", default_output)
+        self.assertNotIn("fonts.example.net", default_output)
+        self.assertIn("fonts.example.net", expanded_output)
+        self.assertIn("schema.example.net", expanded_output)
+
+    @patch("reconmap.cli.scan")
+    def test_no_truncate_prints_full_values(self, scan):
+        long_value = "v=spf1 include:" + ("very-long-provider-name." * 4) + "example.net -all"
+        scan.return_value = ScanResult(
+            SUMMARY,
+            HOSTS,
+            [{"name": "example.com", "type": "TXT", "value": long_value, "error": ""}],
+            [],
+            [],
+            {},
+        )
+
+        _, default_output, _ = run_cli(["scan", "example.com"])
+        _, full_output, _ = run_cli(["scan", "example.com", "--no-truncate"])
+        self.assertNotIn(long_value, default_output)
+        self.assertIn(long_value, full_output)
 
 
 if __name__ == "__main__":

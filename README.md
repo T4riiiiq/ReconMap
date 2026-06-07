@@ -111,6 +111,7 @@ The terminal report includes DNS totals plus per-host asset, HTTP service, and T
 ```bash
 reconmap scan example.com --max-rows 50
 reconmap scan example.com --max-rows 0  # show all rows
+reconmap scan example.com --no-truncate  # show full terminal values
 ```
 
 Print live progress followed by the concise summary:
@@ -200,6 +201,9 @@ External HTML, JavaScript, and CSP references are recorded separately to reduce 
 ```bash
 reconmap scan example.com --pivot --show-external-references
 ```
+
+External references are summarized by default to keep terminal output focused. Use
+`--show-external-references` to display their full rows.
 
 ## Testing
 

@@ -9,7 +9,8 @@ from typing import Any, Callable
 
 from reconmap.dnsmap import email_security_hints, resolved_ips
 from reconmap.httpmap import SECURITY_HEADERS
-from reconmap.pivot import relationship_text
+from reconmap.pivot import display_status, relationship_text
+from reconmap.util import is_ip
 
 
 @dataclass
@@ -171,7 +172,7 @@ def render_report(result: ScanResult) -> str:
         for row in intelligence.get("interesting_hosts", [])
     ]
     relationship_rows = [
-        [row["source"], row["relation"], row["target"], row["depth"], row["status"]]
+        [row["source"], row["relation"], row["target"], row["depth"], display_status(row["status"])]
         for row in result.relationships
     ]
     return f"""# ReconMap Report: {summary['root_domain']}
@@ -324,14 +325,21 @@ def write_outputs(
     return summary
 
 
-def _terminal_table(headers: list[str], rows: list[list[Any]], max_rows: int) -> str:
+def _terminal_table(
+    headers: list[str],
+    rows: list[list[Any]],
+    max_rows: int,
+    no_truncate: bool = False,
+) -> str:
     displayed = rows if max_rows == 0 else rows[:max_rows]
     if not displayed:
         return "(none observed)"
-    widths = [
-        min(max(len(str(header)), *(len(str(row[index])) for row in displayed)), limit)
-        for index, (header, limit) in enumerate(zip(headers, [32, 42, 24, 22, 42]))
-    ]
+    widths = []
+    for index, (header, limit) in enumerate(zip(headers, [32, 42, 24, 22, 42])):
+        if str(header) == "STATUS":
+            limit = 32
+        width = max(len(str(header)), *(len(str(row[index])) for row in displayed))
+        widths.append(width if no_truncate else min(width, limit))
 
     def line(row: list[Any]) -> str:
         cells = []
@@ -354,6 +362,8 @@ def render_console_summary(
     result: ScanResult | dict[str, Any],
     output_dir: str | Path | None = None,
     max_rows: int = 20,
+    no_truncate: bool = False,
+    show_external_references: bool = False,
 ) -> str:
     if isinstance(result, dict):
         result = ScanResult(result, [], [], [], [], {})
@@ -361,8 +371,22 @@ def render_console_summary(
     hints = summary["email_security_hints"]
     title = summary["root_domain"] or "provided hosts"
     asset_rows = [
-        [host, ", ".join(resolved_ips(result.dns_rows, host)) or "-", result.sources.get(host, "known")]
+        [host, result.sources.get(host, "known")]
         for host in result.hosts
+        if not is_ip(host)
+    ]
+    ip_hostnames: dict[str, set[str]] = {}
+    for row in result.dns_rows:
+        record_type = row.get("type", "")
+        name = row.get("name", "")
+        value = row.get("value", "")
+        if record_type in {"A", "AAAA"} and is_ip(value) and name and not is_ip(name):
+            ip_hostnames.setdefault(value, set()).add(name)
+        elif record_type == "PTR" and is_ip(name) and value and not is_ip(value):
+            ip_hostnames.setdefault(name, set()).add(value)
+    resolved_ip_rows = [
+        [address, ", ".join(sorted(hostnames))]
+        for address, hostnames in sorted(ip_hostnames.items())
     ]
     http_rows = [
         [row["url"], row["status"], row["title"] or "-", row["server"] or "-", _missing_headers(row)]
@@ -386,7 +410,7 @@ def render_console_summary(
         ["Cloud References", ", ".join(intelligence.get("interesting_cloud_references", [])) or "-"],
     ]
     relationship_rows = [
-        [row["source"], row["relation"], row["target"], row["status"]]
+        [row["source"], row["relation"], row["target"], display_status(row["status"])]
         for row in result.relationships
     ]
     dns_rows = [
@@ -414,6 +438,12 @@ def render_console_summary(
         [row["source"], row["target"]]
         for row in summary.get("external_references", [])
     ]
+    ip_target = f"\n\nIP Target\n* {title}" if is_ip(title) else ""
+    external_text = (
+        _terminal_table(["SOURCE", "REFERENCED HOST"], external_rows, max_rows, no_truncate)
+        if show_external_references
+        else f"{len(external_rows)} observed. Use --show-external-references to display."
+    )
     text = f"""ReconMap scan report for {title}
 
 DNS Summary
@@ -425,37 +455,40 @@ DNS Summary
 * DMARC: {'present' if hints['dmarc'] else 'not observed'}
 
 DNS Records
-{_terminal_table(["TYPE", "NAME", "VALUE", "ERROR"], dns_rows, max_rows)}
+{_terminal_table(["TYPE", "NAME", "VALUE", "ERROR"], dns_rows, max_rows, no_truncate)}{ip_target}
 
-Discovered Assets
-{_terminal_table(["HOST", "IPS", "SOURCE"], asset_rows, max_rows)}
+Discovered Hostnames
+{_terminal_table(["HOST", "SOURCE"], asset_rows, max_rows, no_truncate)}
+
+Resolved IPs
+{_terminal_table(["IP", "HOSTNAMES"], resolved_ip_rows, max_rows, no_truncate)}
 
 HTTP Services
-{_terminal_table(["URL", "STATUS", "TITLE", "SERVER", "MISSING HEADERS"], http_rows, max_rows)}
+{_terminal_table(["URL", "STATUS", "TITLE", "SERVER", "MISSING HEADERS"], http_rows, max_rows, no_truncate)}
 
 TLS Certificates
-{_terminal_table(["HOST", "ISSUER", "EXPIRES", "DAYS LEFT", "SAN COUNT"], tls_rows, max_rows)}
+{_terminal_table(["HOST", "ISSUER", "EXPIRES", "DAYS LEFT", "SAN COUNT"], tls_rows, max_rows, no_truncate)}
 
 TLS Evidence
-{_terminal_table(["HOST", "SAN NAMES", "ISSUER", "EXPIRY"], san_rows, max_rows)}
+{_terminal_table(["HOST", "SAN NAMES", "ISSUER", "EXPIRY"], san_rows, max_rows, no_truncate)}
 
 Redirect Evidence
-{_terminal_table(["URL", "FULL REDIRECT CHAIN"], redirect_rows, max_rows)}
+{_terminal_table(["URL", "FULL REDIRECT CHAIN"], redirect_rows, max_rows, no_truncate)}
 
 Intelligence Overview
-{_terminal_table(["AREA", "OBSERVED INDICATORS"], intelligence_rows, max_rows)}
+{_terminal_table(["AREA", "OBSERVED INDICATORS"], intelligence_rows, max_rows, no_truncate)}
 
 Provider Evidence
-{_terminal_table(["AREA", "PROVIDER", "SERVICE", "EVIDENCE"], provider_evidence_rows, max_rows)}
+{_terminal_table(["AREA", "PROVIDER", "SERVICE", "EVIDENCE"], provider_evidence_rows, max_rows, no_truncate)}
 
 IP Intelligence
-{_terminal_table(["ADDRESS", "ASN", "PROVIDER", "PREFIX"], ip_rows, max_rows)}
+{_terminal_table(["ADDRESS", "ASN", "PROVIDER", "PREFIX"], ip_rows, max_rows, no_truncate)}
 
 External References
-{_terminal_table(["SOURCE", "REFERENCED HOST"], external_rows, max_rows)}
+{external_text}
 
 Discovery Chains
-{_terminal_table(["SOURCE", "EVIDENCE", "TARGET", "STATUS"], relationship_rows, max_rows)}"""
+{_terminal_table(["SOURCE", "EVIDENCE", "TARGET", "STATUS"], relationship_rows, max_rows, no_truncate)}"""
     if output_dir:
         output = Path(output_dir)
         files = "\n".join(f"* {output / name}" for name in (

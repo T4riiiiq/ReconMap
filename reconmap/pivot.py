@@ -10,6 +10,18 @@ from reconmap.util import is_ip, normalize_target, registrable_domain
 
 
 HOST_IN_RECORD = re.compile(r"([a-z0-9][a-z0-9.-]*\.[a-z]{2,})\.?", re.IGNORECASE)
+PIVOT_STATUS_LABELS = {
+    "queued": "discovered-and-scanned",
+    "depth-limit": "not-scanned-depth-limit",
+    "asset-limit": "not-scanned-asset-limit",
+    "external-evidence-only": "not-scanned-external-evidence",
+    "already-known": "already-known",
+    "attribution": "evidence-attribution",
+}
+
+
+def display_status(status: str) -> str:
+    return PIVOT_STATUS_LABELS.get(status, status.replace("_", "-"))
 
 
 @dataclass
@@ -102,5 +114,8 @@ def relationship_text(root: str, relationships: list[dict[str, Any]]) -> str:
         prefix = "    " if last_group else "|   "
         for index, row in enumerate(rows):
             branch = "`--" if index == len(rows) - 1 else "|--"
-            lines.append(f"{prefix}{branch} {row['relation']}: {row['target']} [{row['status']}]")
+            lines.append(
+                f"{prefix}{branch} {row['relation']}: {row['target']} "
+                f"[{display_status(row['status'])}]"
+            )
     return "\n".join(lines) + "\n"
