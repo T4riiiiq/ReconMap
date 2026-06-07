@@ -1,8 +1,10 @@
 # ReconMap
 
-ReconMap is a lightweight attack surface mapping utility for SOC, DFIR, and security assessment workflows.
+ReconMap is a terminal-first Recon Intelligence Accelerator for SOC, DFIR, and security assessment workflows.
 
 Its job is to consolidate public attack surface intelligence that analysts would otherwise gather manually from DNS, certificates, HTTP responses, and provider-specific indicators. ReconMap exposes evidence; the analyst remains the decision engine.
+
+ReconMap stops at evidence collection, bounded evidence-based pivoting, relationship mapping, and attack surface visibility. It intentionally does not enter Nmap, ffuf, Burp, vulnerability-scanning, or exploitation territory.
 
 It helps analysts quickly understand:
 
@@ -129,16 +131,24 @@ Suppress normal output and print errors only:
 reconmap scan example.com --quiet
 ```
 
-Write the report artifacts and print the concise summary:
+By default, ReconMap is terminal-only and creates no files or directories.
+
+Write report artifacts to an explicit directory:
 
 ```bash
 reconmap scan example.com -o output/
 ```
 
-Explicitly prevent file output, even when `-o` is supplied:
+Save to a timestamped directory such as `reconmap-example.com-20260607-153000`:
 
 ```bash
-reconmap scan example.com -o output/ --no-files
+reconmap scan example.com --save
+```
+
+Explicitly force terminal-only behavior, even when `-o` is supplied:
+
+```bash
+reconmap scan example.com -o output/ --no-save
 ```
 
 The same output modes apply to every command:
@@ -173,7 +183,6 @@ If a provider is unavailable, the scan continues and records a note. Passive nam
 
 Without `-o`, commands print results to stdout and do not write files. With `-o`, each command writes:
 
-- `hosts.csv`
 - `dns.csv`
 - `http.csv`
 - `tls.csv`
@@ -185,6 +194,12 @@ Without `-o`, commands print results to stdout and do not write files. With `-o`
 See [`sample-output/`](sample-output/) for an example.
 
 `summary.json` includes derived intelligence indicators and inventory classifications. These are observations based on public strings and naming patterns, not security findings or vulnerability conclusions.
+
+External HTML, JavaScript, and CSP references are recorded separately to reduce discovery-chain noise. Show them in discovery chains when needed:
+
+```bash
+reconmap scan example.com --pivot --show-external-references
+```
 
 ## Testing
 

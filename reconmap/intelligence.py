@@ -15,8 +15,25 @@ CLOUD_REFERENCE_PATTERNS = {
     "CloudFront": ("cloudfront",),
     "API Gateway": ("execute-api.",),
     "S3": ("s3.amazonaws.com", ".s3.",),
+    "Elastic Beanstalk": ("elasticbeanstalk.com",),
     "Azure Blob": ("blob.core.windows.net",),
+    "Azure Web Apps": ("azurewebsites.net",),
+    "Azure API Management": ("azure-api.net",),
     "Google Storage": ("storage.googleapis.com",),
+    "Google App Engine": ("appspot.com",),
+    "Google Cloud Functions": ("cloudfunctions.net",),
+}
+CLOUD_SERVICE_PROVIDERS = {
+    "CloudFront": "AWS",
+    "API Gateway": "AWS",
+    "S3": "AWS",
+    "Elastic Beanstalk": "AWS",
+    "Azure Blob": "Azure",
+    "Azure Web Apps": "Azure",
+    "Azure API Management": "Azure",
+    "Google Storage": "GCP",
+    "Google App Engine": "GCP",
+    "Google Cloud Functions": "GCP",
 }
 IDENTITY_PATTERNS = {
     "Okta": ("okta.com", "oktapreview.com"),
@@ -37,6 +54,38 @@ EMAIL_PATTERNS = {
 def _matches(text: str, patterns: dict[str, tuple[str, ...]]) -> list[str]:
     lower = text.lower()
     return sorted(name for name, values in patterns.items() if any(value in lower for value in values))
+
+
+def _evidence(
+    observations: list[str],
+    patterns: dict[str, tuple[str, ...]],
+    area: str,
+    service: str = "",
+) -> list[dict[str, str]]:
+    rows = []
+    seen = set()
+    for observation in observations:
+        lower = observation.lower()
+        for provider, values in patterns.items():
+            if any(value in lower for value in values):
+                key = (provider, observation)
+                if key not in seen:
+                    seen.add(key)
+                    rows.append({
+                        "area": area,
+                        "provider": provider,
+                        "service": service or provider,
+                        "evidence": observation,
+                    })
+    return rows
+
+
+def _cloud_service_evidence(observations: list[str]) -> list[dict[str, str]]:
+    rows = _evidence(observations, CLOUD_REFERENCE_PATTERNS, "Cloud")
+    for row in rows:
+        row["service"] = row["provider"]
+        row["provider"] = CLOUD_SERVICE_PROVIDERS[row["service"]]
+    return rows
 
 
 def classify_asset(host: str, http_rows: list[dict[str, Any]]) -> str:
@@ -62,11 +111,13 @@ def analyze(
     http_rows: list[dict[str, Any]],
     tls_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    dns_text = " ".join(str(row.get("value", "")) for row in dns_rows)
-    http_text = " ".join(
+    dns_observations = [str(row.get("value", "")) for row in dns_rows if row.get("value")]
+    http_observations = [
         " ".join(str(row.get(key, "")) for key in ("url", "final_url", "redirect_chain", "server", "technologies", "cookies"))
         for row in http_rows
-    )
+    ]
+    dns_text = " ".join(dns_observations)
+    http_text = " ".join(http_observations)
     all_text = f"{dns_text} {http_text}"
     cloud = _matches(all_text, CLOUD_PATTERNS)
     cloud_references = _matches(all_text, CLOUD_REFERENCE_PATTERNS)
@@ -95,4 +146,10 @@ def analyze(
         "interesting_certificates": certificates,
         "interesting_cloud_references": cloud_references,
         "interesting_email_infrastructure": email,
+        "cloud_evidence": (
+            _evidence(dns_observations + http_observations, CLOUD_PATTERNS, "Cloud", "Provider")
+            + _cloud_service_evidence(dns_observations + http_observations)
+        ),
+        "identity_evidence": _evidence(http_observations, IDENTITY_PATTERNS, "Identity"),
+        "email_evidence": _evidence(dns_observations, EMAIL_PATTERNS, "Email"),
     }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import ipaddress
 
 import dns.exception
 import dns.resolver
@@ -64,6 +65,29 @@ def collect_ptr(address: str, timeout: float = 5.0) -> list[dict[str, Any]]:
     if values:
         return [{"name": address, "type": "PTR", "value": value, "error": ""} for value in values]
     return [{"name": address, "type": "PTR", "value": "", "error": error}] if error else []
+
+
+def collect_asn(address: str, timeout: float = 5.0) -> dict[str, str]:
+    try:
+        parsed = ipaddress.ip_address(address)
+    except ValueError as exc:
+        return {"address": address, "asn": "", "provider": "", "prefix": "", "error": str(exc)}
+    if parsed.version == 4:
+        reversed_address = ".".join(reversed(str(parsed).split(".")))
+        query = f"{reversed_address}.origin.asn.cymru.com"
+    else:
+        reversed_address = ".".join(reversed(parsed.exploded.replace(":", "")))
+        query = f"{reversed_address}.origin6.asn.cymru.com"
+    values, error = query_record(query, "TXT", timeout)
+    if not values:
+        return {"address": address, "asn": "", "provider": "", "prefix": "", "error": error}
+    parts = [part.strip() for part in values[0].split("|")]
+    asn = parts[0] if parts else ""
+    prefix = parts[1] if len(parts) > 1 else ""
+    provider_values, provider_error = query_record(f"AS{asn}.asn.cymru.com", "TXT", timeout) if asn else ([], "")
+    provider_parts = [part.strip() for part in provider_values[0].split("|")] if provider_values else []
+    provider = provider_parts[-1] if provider_parts else ""
+    return {"address": address, "asn": asn, "provider": provider, "prefix": prefix, "error": error or provider_error}
 
 
 def resolved_ips(rows: list[dict[str, Any]], host: str) -> list[str]:

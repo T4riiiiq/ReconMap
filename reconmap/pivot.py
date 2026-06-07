@@ -82,20 +82,25 @@ def evidence_candidates(
 
 def relationship_text(root: str, relationships: list[dict[str, Any]]) -> str:
     lines = [root]
-    seen: set[tuple[str, str, str]] = set()
-
-    def walk(source: str, prefix: str) -> None:
-        rows = [row for row in relationships if row["source"] == source]
+    groups = {
+        "DNS Relationships": {"A", "AAAA", "CNAME", "PTR", "MX", "NS"},
+        "TLS Relationships": {"TLS SAN"},
+        "Redirect Relationships": {"HTTP Redirect"},
+        "Cloud Relationships": {"Cloud"},
+        "Identity Relationships": {"Identity"},
+        "Email Relationships": {"Email"},
+        "External References": {"HTTP Reference"},
+    }
+    grouped = []
+    for name, relations in groups.items():
+        rows = [row for row in relationships if row["relation"] in relations]
+        if rows:
+            grouped.append((name, rows))
+    for group_index, (name, rows) in enumerate(grouped):
+        last_group = group_index == len(grouped) - 1
+        lines.append(f"{'`--' if last_group else '|--'} {name}")
+        prefix = "    " if last_group else "|   "
         for index, row in enumerate(rows):
-            key = (row["source"], row["relation"], row["target"])
-            if key in seen:
-                continue
-            seen.add(key)
-            last = index == len(rows) - 1
-            branch = "`--" if last else "|--"
+            branch = "`--" if index == len(rows) - 1 else "|--"
             lines.append(f"{prefix}{branch} {row['relation']}: {row['target']} [{row['status']}]")
-            if row["status"] in {"queued", "already-known"}:
-                walk(row["target"], prefix + ("    " if last else "|   "))
-
-    walk(root, "")
     return "\n".join(lines) + "\n"

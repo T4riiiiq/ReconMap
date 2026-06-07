@@ -153,6 +153,19 @@ def render_report(result: ScanResult) -> str:
         ["Identity", ", ".join(intelligence.get("identity_providers", [])) or "-"],
         ["Email", ", ".join(intelligence.get("email_providers", [])) or "-"],
     ]
+    evidence_rows = [
+        [row["area"], row["provider"], row.get("service", row["provider"]), row["evidence"]]
+        for key in ("cloud_evidence", "identity_evidence", "email_evidence")
+        for row in intelligence.get(key, [])
+    ]
+    ip_rows = [
+        [row["address"], row["asn"] or "-", row["provider"] or "-", row["prefix"] or "-", row["error"] or "-"]
+        for row in summary.get("ip_intelligence", [])
+    ]
+    external_rows = [
+        [row["source"], row["target"]]
+        for row in summary.get("external_references", [])
+    ]
     interesting_hosts = [
         [row["host"], row["category"]]
         for row in intelligence.get("interesting_hosts", [])
@@ -199,6 +212,14 @@ def render_report(result: ScanResult) -> str:
 
 {_markdown_table(["Area", "Observed Indicators"], provider_rows)}
 
+## Provider Evidence
+
+{_markdown_table(["Area", "Provider", "Service", "Evidence"], evidence_rows)}
+
+## IP Intelligence
+
+{_markdown_table(["Address", "ASN", "Provider", "Prefix", "Error"], ip_rows)}
+
 ## Historical Certificate SANs
 
 {_markdown_table(["Certificate-Derived Name"], [[name] for name in summary.get("historical_sans", [])])}
@@ -222,6 +243,10 @@ def render_report(result: ScanResult) -> str:
 ## Interesting Email Infrastructure
 
 {_markdown_table(["Provider"], [[name] for name in intelligence.get("interesting_email_infrastructure", [])])}
+
+## External References
+
+{_markdown_table(["Source", "Referenced Host"], external_rows)}
 
 ## Discovery Chains
 
@@ -254,10 +279,6 @@ def write_outputs(
 ) -> dict[str, Any]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    host_rows = [{"host": host, "resolved_ips": "; ".join(resolved_ips(dns_rows, host))} for host in hosts]
-    _write_csv(output / "hosts.csv", host_rows, ["host", "resolved_ips"])
-    if progress:
-        progress(f"Wrote {output / 'hosts.csv'}", success=True)
     _write_csv(output / "dns.csv", dns_rows, ["name", "type", "value", "error"])
     if progress:
         progress(f"Wrote {output / 'dns.csv'}", success=True)
@@ -368,6 +389,31 @@ def render_console_summary(
         [row["source"], row["relation"], row["target"], row["status"]]
         for row in result.relationships
     ]
+    dns_rows = [
+        [row["type"], row["name"], row["value"] or "-", row["error"] or "-"]
+        for row in result.dns_rows
+    ]
+    san_rows = [
+        [f"{row['host']}:{row.get('port', 443)}", row["sans"] or "-", _issuer_name(str(row["issuer"])), str(row["expiry_date"])[:10]]
+        for row in result.tls_rows
+    ]
+    redirect_rows = [
+        [row["url"], row.get("redirect_chain", "") or "-"]
+        for row in result.http_rows if row.get("redirect_chain")
+    ]
+    provider_evidence_rows = [
+        [row["area"], row["provider"], row.get("service", row["provider"]), row["evidence"]]
+        for key in ("cloud_evidence", "identity_evidence", "email_evidence")
+        for row in intelligence.get(key, [])
+    ]
+    ip_rows = [
+        [row["address"], row["asn"] or "-", row["provider"] or "-", row["prefix"] or "-"]
+        for row in summary.get("ip_intelligence", [])
+    ]
+    external_rows = [
+        [row["source"], row["target"]]
+        for row in summary.get("external_references", [])
+    ]
     text = f"""ReconMap scan report for {title}
 
 DNS Summary
@@ -378,6 +424,9 @@ DNS Summary
 * SPF: {'present' if hints['spf'] else 'not observed'}
 * DMARC: {'present' if hints['dmarc'] else 'not observed'}
 
+DNS Records
+{_terminal_table(["TYPE", "NAME", "VALUE", "ERROR"], dns_rows, max_rows)}
+
 Discovered Assets
 {_terminal_table(["HOST", "IPS", "SOURCE"], asset_rows, max_rows)}
 
@@ -387,15 +436,30 @@ HTTP Services
 TLS Certificates
 {_terminal_table(["HOST", "ISSUER", "EXPIRES", "DAYS LEFT", "SAN COUNT"], tls_rows, max_rows)}
 
+TLS Evidence
+{_terminal_table(["HOST", "SAN NAMES", "ISSUER", "EXPIRY"], san_rows, max_rows)}
+
+Redirect Evidence
+{_terminal_table(["URL", "FULL REDIRECT CHAIN"], redirect_rows, max_rows)}
+
 Intelligence Overview
 {_terminal_table(["AREA", "OBSERVED INDICATORS"], intelligence_rows, max_rows)}
+
+Provider Evidence
+{_terminal_table(["AREA", "PROVIDER", "SERVICE", "EVIDENCE"], provider_evidence_rows, max_rows)}
+
+IP Intelligence
+{_terminal_table(["ADDRESS", "ASN", "PROVIDER", "PREFIX"], ip_rows, max_rows)}
+
+External References
+{_terminal_table(["SOURCE", "REFERENCED HOST"], external_rows, max_rows)}
 
 Discovery Chains
 {_terminal_table(["SOURCE", "EVIDENCE", "TARGET", "STATUS"], relationship_rows, max_rows)}"""
     if output_dir:
         output = Path(output_dir)
         files = "\n".join(f"* {output / name}" for name in (
-            "hosts.csv", "dns.csv", "http.csv", "tls.csv", "pivots.csv",
+            "dns.csv", "http.csv", "tls.csv", "pivots.csv",
             "relationships.txt", "summary.json", "report.md"
         ))
         text += f"\n\nOutput written to:\n\n{files}"

@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from reconmap.reporting import write_outputs
 from reconmap.dnsmap import collect_dns
+from reconmap.dnsmap import collect_asn
 
 
 class ReportingTests(unittest.TestCase):
@@ -14,6 +15,17 @@ class ReportingTests(unittest.TestCase):
         collect_dns("example.com", 1)
         requested = {call.args[1] for call in query.call_args_list}
         self.assertTrue({"SOA", "CAA", "SRV"}.issubset(requested))
+
+    @patch("reconmap.dnsmap.query_record")
+    def test_ip_asn_collection_uses_public_dns_evidence(self, query):
+        query.side_effect = [
+            (["13335 | 1.1.1.0/24 | AU | apnic | 2011-08-11"], ""),
+            (["13335 | AU | apnic | 2010-07-14 | CLOUDFLARENET, US"], ""),
+        ]
+        result = collect_asn("1.1.1.1", 1)
+        self.assertEqual(result["asn"], "13335")
+        self.assertEqual(result["provider"], "CLOUDFLARENET, US")
+        self.assertEqual(query.call_args_list[0].args[0], "1.1.1.1.origin.asn.cymru.com")
 
     def test_writes_all_expected_outputs(self):
         dns_rows = [{"name": "example.com", "type": "A", "value": "192.0.2.10", "error": ""}]
@@ -31,7 +43,7 @@ class ReportingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             write_outputs(directory, "example.com", ["example.com"], dns_rows, http_rows, tls_rows, [])
             expected = {
-                "hosts.csv", "dns.csv", "http.csv", "tls.csv", "pivots.csv",
+                "dns.csv", "http.csv", "tls.csv", "pivots.csv",
                 "relationships.txt", "summary.json", "report.md",
             }
             self.assertEqual({path.name for path in Path(directory).iterdir()}, expected)
@@ -51,6 +63,9 @@ class ReportingTests(unittest.TestCase):
             self.assertIn("## Interesting Email Infrastructure", report)
             self.assertIn("## Discovery Chains", report)
             self.assertIn("## Relationship Map", report)
+            self.assertIn("## Provider Evidence", report)
+            self.assertIn("## IP Intelligence", report)
+            self.assertIn("## External References", report)
 
     def test_empty_domainkey_query_is_not_a_dkim_hint(self):
         from reconmap.dnsmap import email_security_hints

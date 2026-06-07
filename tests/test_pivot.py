@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from reconmap.httpmap import extract_referenced_hosts, fingerprint_target
-from reconmap.pivot import PivotPolicy, evidence_candidates
+from reconmap.pivot import PivotPolicy, evidence_candidates, relationship_text
 from reconmap.scanner import scan
 from reconmap.util import is_ip, normalize_target
 
@@ -89,6 +89,47 @@ class PivotTests(unittest.TestCase):
 
         self.assertFalse(hasattr(scanner, "brute_force"))
         self.assertFalse(hasattr(scanner, "port_scan"))
+
+    def test_relationship_map_groups_evidence(self):
+        text = relationship_text("example.com", [
+            {"source": "example.com", "relation": "A", "target": "192.0.2.10", "status": "queued"},
+            {"source": "example.com", "relation": "TLS SAN", "target": "www.example.com", "status": "queued"},
+            {"source": "example.com", "relation": "Cloud", "target": "CloudFront", "status": "attribution"},
+        ])
+        self.assertIn("DNS Relationships", text)
+        self.assertIn("TLS Relationships", text)
+        self.assertIn("Cloud Relationships", text)
+
+    @patch("reconmap.scanner.inspect_hosts", return_value=[])
+    @patch("reconmap.scanner.fingerprint_target")
+    @patch("reconmap.scanner.collect_dns", return_value=[])
+    @patch("reconmap.scanner.discover")
+    def test_external_references_are_suppressed_by_default(self, discover, _dns, http, _tls):
+        discover.return_value = (["example.com"], [], {"example.com": "root"})
+        http.return_value = [{
+            "host": "example.com", "url": "https://example.com/", "referenced_hosts": "fonts.googleapis.com",
+            "redirect_chain": "", "status": 200, "error": "",
+            "hsts": False, "csp": False, "x_frame_options": False,
+            "x_content_type_options": False, "referrer_policy": False,
+        }]
+        result = scan("example.com", None, None, False, 1, 0, pivot=True)
+        self.assertFalse(any(row["target"] == "fonts.googleapis.com" for row in result.relationships))
+        self.assertEqual(result.summary["external_references"][0]["target"], "fonts.googleapis.com")
+
+    @patch("reconmap.scanner.inspect_hosts", return_value=[])
+    @patch("reconmap.scanner.fingerprint_target")
+    @patch("reconmap.scanner.collect_dns", return_value=[])
+    @patch("reconmap.scanner.discover")
+    def test_show_external_references_includes_chain_evidence(self, discover, _dns, http, _tls):
+        discover.return_value = (["example.com"], [], {"example.com": "root"})
+        http.return_value = [{
+            "host": "example.com", "url": "https://example.com/", "referenced_hosts": "fonts.googleapis.com",
+            "redirect_chain": "", "status": 200, "error": "",
+            "hsts": False, "csp": False, "x_frame_options": False,
+            "x_content_type_options": False, "referrer_policy": False,
+        }]
+        result = scan("example.com", None, None, False, 1, 0, pivot=True, show_external_references=True)
+        self.assertTrue(any(row["target"] == "fonts.googleapis.com" for row in result.relationships))
 
 
 if __name__ == "__main__":

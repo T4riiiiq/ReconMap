@@ -30,6 +30,18 @@ class IntelligenceTests(unittest.TestCase):
         self.assertEqual(classify_asset("vpn.example.com", []), "VPN")
         self.assertEqual(classify_asset("admin.example.com", []), "Admin")
 
+    def test_detects_refined_cloud_services_with_evidence(self):
+        rows = [{
+            "host": "example.com", "url": "https://example.com/", "final_url": "",
+            "redirect_chain": "", "server": "",
+            "technologies": "api.azure-api.net elasticbeanstalk.com cloudfunctions.net",
+            "cookies": "",
+        }]
+        result = analyze(["example.com"], [], rows, [])
+        services = {row["service"] for row in result["cloud_evidence"]}
+        self.assertTrue({"Azure API Management", "Elastic Beanstalk", "Google Cloud Functions"}.issubset(services))
+        self.assertTrue(all("service" in row and "evidence" in row for row in result["cloud_evidence"]))
+
 
 if __name__ == "__main__":
     unittest.main()

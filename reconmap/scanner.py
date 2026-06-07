@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import Callable
 
 from reconmap.discovery import discover
-from reconmap.dnsmap import collect_dns, collect_ptr
+from reconmap.dnsmap import collect_asn, collect_dns, collect_ptr
 from reconmap.httpmap import fingerprint_hosts, fingerprint_target
 from reconmap.intelligence import analyze
 from reconmap.pivot import PivotPolicy, evidence_candidates
 from reconmap.reporting import ScanResult, build_summary, write_outputs
 from reconmap.tlsmap import inspect_hosts, inspect_tls
-from reconmap.util import is_ip, read_hosts
+from reconmap.util import is_ip, read_hosts, registrable_domain
 
 
 def scan(
@@ -26,6 +26,7 @@ def scan(
     same_domain_only: bool = True,
     include_external: bool = False,
     max_references: int = 100,
+    show_external_references: bool = False,
 ) -> ScanResult:
     manual = read_hosts(subdomains_file) if subdomains_file else []
     if is_ip(domain):
@@ -43,12 +44,15 @@ def scan(
     tls_rows: list[dict] = []
     relationships: list[dict] = []
     scanned: set[str] = set()
+    ip_intelligence: list[dict[str, str]] = []
+    external_references: list[dict[str, str]] = []
 
     def collect_asset(host: str) -> None:
         if progress:
             progress(f"Resolving DNS records for {host}")
         if is_ip(host):
             dns_rows.extend(collect_ptr(host, timeout))
+            ip_intelligence.append(collect_asn(host, timeout))
             asset_http = fingerprint_target(host, timeout, delay, progress, ip_target=True)
             http_rows.extend(asset_http)
             for port in (443, 8443):
@@ -68,6 +72,15 @@ def scan(
     for host in list(hosts):
         collect_asset(host)
 
+    for row in http_rows:
+        for reference in str(row.get("referenced_hosts", "")).split("; "):
+            if not reference:
+                continue
+            if is_ip(domain) or registrable_domain(reference) != registrable_domain(domain):
+                item = {"source": row["host"], "target": reference}
+                if item not in external_references and len(external_references) < max_references:
+                    external_references.append(item)
+
     if pivot:
         policy = PivotPolicy(domain, pivot_depth, max_assets, same_domain_only, include_external, max_references)
         queue = [(host, 0) for host in hosts]
@@ -80,6 +93,16 @@ def scan(
             asset_http = [row for row in http_rows if row["host"] == asset]
             asset_tls = [row for row in tls_rows if row["host"] == asset]
             for relation, candidate in evidence_candidates(asset, asset_dns, asset_http, asset_tls):
+                if (
+                    relation == "HTTP Reference"
+                    and not show_external_references
+                    and not include_external
+                    and not policy.allows(candidate, relation)
+                ):
+                    item = {"source": asset, "target": candidate}
+                    if item not in external_references and len(external_references) < policy.max_references:
+                        external_references.append(item)
+                    continue
                 if reference_count >= policy.max_references:
                     break
                 reference_count += 1
@@ -107,6 +130,19 @@ def scan(
     summary["historical_sans"] = sorted(host for host, source in sources.items() if source == "crt.sh")
     summary["pivot_enabled"] = pivot
     summary["relationships"] = relationships
+    summary["external_references"] = external_references
+    summary["ip_intelligence"] = ip_intelligence
+    for area, key in (("Cloud", "cloud_evidence"), ("Identity", "identity_evidence"), ("Email", "email_evidence")):
+        for evidence in summary["intelligence"].get(key, []):
+            target = evidence["provider"]
+            if evidence.get("service") not in {"", "Provider", evidence["provider"]}:
+                target = f"{target} {evidence['service']}"
+            relationship = {
+                "source": domain, "relation": area, "target": target,
+                "depth": 0, "status": "attribution",
+            }
+            if relationship not in relationships:
+                relationships.append(relationship)
     if output:
         write_outputs(output, domain, hosts, dns_rows, http_rows, tls_rows, notes, summary, progress, sources, relationships)
     return ScanResult(summary, hosts, dns_rows, http_rows, tls_rows, sources, relationships)

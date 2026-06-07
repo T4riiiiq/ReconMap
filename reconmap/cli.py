@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime
+from pathlib import Path
 
 from reconmap import __version__
 from reconmap.reporting import render_console_summary
@@ -11,8 +13,10 @@ from reconmap.util import normalize_host, normalize_target
 
 
 def common_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("-o", "--output", help="Write output files to this directory")
-    parser.add_argument("--no-files", action="store_true", help="Do not write output files")
+    saving = parser.add_mutually_exclusive_group()
+    saving.add_argument("-o", "--output", help="Write output files to this directory")
+    saving.add_argument("--save", action="store_true", help="Save to a timestamped ReconMap directory")
+    parser.add_argument("--no-save", "--no-files", dest="no_save", action="store_true", help="Force terminal-only output")
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("-v", "--verbose", action="store_true", help="Print live progress and final summary")
     modes.add_argument("-q", "--quiet", action="store_true", help="Print errors only")
@@ -42,6 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     scope.add_argument("--same-domain-only", action="store_true", default=True, help="Pivot only within the related registrable domain (default)")
     scope.add_argument("--include-external", action="store_true", help="Allow recursive collection of external evidence targets")
     scan_parser.add_argument("--max-references", type=int, default=100, help="Maximum pivot evidence references (default: 100)")
+    scan_parser.add_argument("--show-external-references", action="store_true", help="Show external HTML/JS/CSP references in discovery chains")
     common_options(scan_parser)
 
     http_parser = commands.add_parser("http", help="Fingerprint HTTP/S for a host list")
@@ -71,7 +76,13 @@ def main(argv: list[str] | None = None) -> int:
             or getattr(args, "max_references", 0) < 0
         ):
             raise ValueError("timeout must be positive; delay and max-rows cannot be negative")
-        output = None if args.no_files else args.output
+        output = args.output
+        if args.save:
+            target = getattr(args, "domain", None) or Path(getattr(args, "hosts", "hosts")).stem
+            safe_target = "".join(char if char.isalnum() or char in ".-_" else "_" for char in target)
+            output = f"reconmap-{safe_target}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        if args.no_save:
+            output = None
         progress = _progress if args.verbose else None
         if args.command == "scan":
             result = scan(
@@ -88,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
                 not args.include_external,
                 args.include_external,
                 args.max_references,
+                args.show_external_references,
             )
         elif args.command == "http":
             result = http_only(args.hosts, output, args.timeout, args.delay, progress)

@@ -68,6 +68,21 @@ def run_cli(arguments):
 
 class CliOutputTests(unittest.TestCase):
     @patch("reconmap.cli.scan", return_value=RESULT)
+    def test_default_scan_passes_no_output_directory(self, scan):
+        run_cli(["scan", "example.com"])
+        self.assertIsNone(scan.call_args.args[1])
+
+    @patch("reconmap.cli.scan", return_value=RESULT)
+    def test_save_uses_timestamped_directory(self, scan):
+        run_cli(["scan", "example.com", "--save"])
+        self.assertRegex(scan.call_args.args[1], r"^reconmap-example\.com-\d{8}-\d{6}$")
+
+    @patch("reconmap.cli.scan", return_value=RESULT)
+    def test_no_save_overrides_output_directory(self, scan):
+        run_cli(["scan", "example.com", "-o", "ignored", "--no-save"])
+        self.assertIsNone(scan.call_args.args[1])
+
+    @patch("reconmap.cli.scan", return_value=RESULT)
     def test_default_output_is_human_readable_not_raw_json(self, _scan):
         code, stdout, _ = run_cli(["scan", "example.com", "--no-files"])
         self.assertEqual(code, 0)
